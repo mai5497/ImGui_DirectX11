@@ -17,7 +17,7 @@
 #include <mmsystem.h>
 #include <d3d11.h>
 #include <DirectXMath.h>
-//#include "resource.h"
+#include "resource.h"
 
 // ñ{óàÇÕÉwÉbÉ_Ç…èëÇ©Ç»Ç¢ï˚Ç™ó«Ç¢
 using namespace DirectX;
@@ -88,6 +88,20 @@ HWND GetMainWnd();
 HINSTANCE GetInstance();
 ID3D11Device* GetDevice();
 ID3D11DeviceContext* GetDeviceContext();
+bool CreateDeviceD3D(HWND hWnd);
+void CleanupDeviceD3D();
+void CreateRenderTarget();
+void CleanupRenderTarget();
+HRESULT CreateBackBuffer(void);
+void ReleaseBackBuffer();
+void CleanupRenderTarget();
+LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+HRESULT Init(HWND hWnd, BOOL bWindow);
+void Uninit(void);
+void Update(void);
+void Draw(void);
+void RenderBegin();
+void RenderEnd();
 void SetZBuffer(bool bEnable);
 void SetZWrite(bool bEnable);
 void SetBlendState(int nBlendState);

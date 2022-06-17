@@ -10,6 +10,14 @@
 #include "imgui_impl_dx11.h"
 #include <d3d11.h>
 #include <tchar.h>
+#include "AssimpModel.h"
+#include "input.h"
+#include "debugproc.h"
+#include "mesh.h"
+#include "Scene.h"
+#include "number.h"
+#include "Sound.h"
+#include "polygon.h"
 
 //-------- ライブラリのリンク
 #pragma comment(lib, "winmm")
@@ -47,13 +55,11 @@ ID3D11DepthStencilState*	g_pDSS[2];				// Z/ステンシル ステート
 ID3D11RenderTargetView*		g_pRenderTargetView;	// フレームバッファ
 ID3D11Texture2D*			g_pDepthStencilTexture;	// Zバッファ用メモリ
 ID3D11DepthStencilView*		g_pDepthStencilView;	// Zバッファ
-UINT						g_uSyncInterval = 0;	// 垂直同期 (0:無, 1:有)
+UINT						g_uSyncInterval = 1;	// 垂直同期 (0:無, 1:有)
+HWND g_hwnd;    // メインウィンドウハンドル
+HINSTANCE					g_hInst;				// インスタンス ハンドル
+
 // Forward declarations of helper functions
-bool CreateDeviceD3D(HWND hWnd);
-void CleanupDeviceD3D();
-void CreateRenderTarget();
-void CleanupRenderTarget();
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 int	g_nCountFPS;			// FPSカウンタ
 
 //=============================================================================
@@ -65,7 +71,7 @@ int main(int, char**)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("ImGui Example"), NULL };
     ::RegisterClassEx(&wc);
-    HWND hwnd = ::CreateWindow(wc.lpszClassName, _T("Dear ImGui DirectX11 Example"), WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    g_hwnd = ::CreateWindow(wc.lpszClassName, _T("Dear ImGui DirectX11 Example"), WS_OVERLAPPEDWINDOW, 100, 100, SCREEN_WIDTH, SCREEN_HEIGHT, NULL, NULL, wc.hInstance, NULL);
 
     //----- 変数初期化 ------
     // FPS制御のための変数
@@ -76,55 +82,54 @@ int main(int, char**)
     // メッセージ受け取りのための変数
     MSG msg;
 
+    // COM初期化
+    if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {
+        MessageBox(NULL, _T("COMの初期化に失敗しました。"), _T("error"), MB_OK);
+        return -1;
+    }
+
+    // インスタンス ハンドル保存
+    g_hInst = wc.hInstance;
 
     // Direct3D初期化
-    if (!CreateDeviceD3D(hwnd))
+    if (!CreateDeviceD3D(g_hwnd))
     {
         CleanupDeviceD3D();
         ::UnregisterClass(wc.lpszClassName, wc.hInstance);
         return 1;
     }
 
+    // ゲーム関連初期化
+    HRESULT hr;
+    hr = Init(g_hwnd, true);
+    if (FAILED(hr)) {
+        return -1;
+    }
+
     // Show the window
-    ::ShowWindow(hwnd, SW_SHOWDEFAULT);
-    ::UpdateWindow(hwnd);
+    ::ShowWindow(g_hwnd, SW_SHOWDEFAULT);
+    ::UpdateWindow(g_hwnd);
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGuiIO& io = ImGui::GetIO();
+    (void)io;
     //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
     //io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
 
-    // Setup Dear ImGui style
+    // DearImGuiのスタイルの変更
     ImGui::StyleColorsDark();
-    //ImGui::StyleColorsClassic();
 
     // Setup Platform/Renderer backends
-    ImGui_ImplWin32_Init(hwnd);
+    ImGui_ImplWin32_Init(g_hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
-    // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return NULL. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-    // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    //io.Fonts->AddFontDefault();
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
-    //IM_ASSERT(font != NULL);
 
     // フレームカウント初期化
     timeBeginPeriod(1);				// 分解能を設定
     dwExecLastTime = dwFPSLastTime = timeGetTime();
     dwCurrentTime = dwFrameCount = 0;
-
-
 
     // Our state
     bool show_demo_window = true;
@@ -204,7 +209,7 @@ int main(int, char**)
 #endif
 
         // メッセージループ
-    for (;;) {
+    while(1){
         if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
             if (msg.message == WM_QUIT) {
                 // PostQuitMessage()が呼ばれたらループ終了
@@ -215,11 +220,6 @@ int main(int, char**)
                 DispatchMessage(&msg);
             }
         } else {
-            // Start the Dear ImGui frame
-            ImGui_ImplDX11_NewFrame();
-            ImGui_ImplWin32_NewFrame();
-            ImGui::NewFrame();
-
             dwCurrentTime = timeGetTime();
             if ((dwCurrentTime - dwFPSLastTime) >= 500) {	// 0.5秒ごとに実行
                 g_nCountFPS = dwFrameCount * 1000 / (dwCurrentTime - dwFPSLastTime);
@@ -231,6 +231,9 @@ int main(int, char**)
                 // 更新処理
                 Update();
             }
+
+            RenderBegin();
+
             // 描画処理
             Draw();
 
@@ -238,38 +241,36 @@ int main(int, char**)
             ImGui::End();
 
             // Rendering
-            ImGui::Render();
-            const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-            g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL);
-            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
-            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            //g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL);
+            //const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
+            //g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
+
+            RenderEnd();
+
 
             dwFrameCount++;
         }
     }
 
-    // Cleanup
-    ImGui_ImplDX11_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
+    //----- 終了処理 -----
+    timeEndPeriod(1);				// 分解能を戻す
 
-    CleanupDeviceD3D();
-    ::DestroyWindow(hwnd);
-    ::UnregisterClass(wc.lpszClassName, wc.hInstance);
+    Uninit();   // ゲームの終了処理
 
     return 0;
 }
 
 // Helper functions
 
-bool CreateDeviceD3D(HWND hWnd)
-{
-    // Setup swap chain
+bool CreateDeviceD3D(HWND hWnd){
+    HRESULT hr = S_OK;
+
+    // デバイス、スワップチェーンの作成
     DXGI_SWAP_CHAIN_DESC sd;
     ZeroMemory(&sd, sizeof(sd));
     sd.BufferCount = 2;
-    sd.BufferDesc.Width = 0;
-    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Width = SCREEN_WIDTH;
+    sd.BufferDesc.Height = SCREEN_HEIGHT;
     sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     sd.BufferDesc.RefreshRate.Numerator = 60;
     sd.BufferDesc.RefreshRate.Denominator = 1;
@@ -289,6 +290,13 @@ bool CreateDeviceD3D(HWND hWnd)
         return false;
 
     CreateRenderTarget();
+
+    // バックバッファ生成
+    hr = CreateBackBuffer();
+    if (FAILED(hr)) {
+        return hr;
+    }
+
     return true;
 }
 
@@ -303,60 +311,16 @@ void CleanupDeviceD3D()
 void CreateRenderTarget()
 {
     ID3D11Texture2D* pBackBuffer;
-    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    //g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
     g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView);
     pBackBuffer->Release();
-}
-
-void CleanupRenderTarget()
-{
-    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = NULL; }
-}
-
-// Forward declare message handler from imgui_impl_win32.cpp
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-// Win32 message handler
-// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
-// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
-// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
-LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
-
-    switch (msg)
-    {
-    case WM_SIZE:
-        if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
-        {
-            CleanupRenderTarget();
-            g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
-            CreateRenderTarget();
-        }
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
-            return 0;
-        break;
-    case WM_DESTROY:
-        ::PostQuitMessage(0);
-        return 0;
-    }
-    return ::DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
 //=============================================================================
 // バックバッファ生成
 //=============================================================================
 HRESULT CreateBackBuffer(void) {
-    // レンダーターゲットビュー生成
-    ID3D11Texture2D* pBackBuffer = nullptr;
-    g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
-    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_pRenderTargetView);
-    SAFE_RELEASE(pBackBuffer);
-
     // Zバッファ用テクスチャ生成
     D3D11_TEXTURE2D_DESC td;
     ZeroMemory(&td, sizeof(td));
@@ -397,22 +361,6 @@ HRESULT CreateBackBuffer(void) {
     vp.TopLeftX = 0;
     vp.TopLeftY = 0;
     g_pd3dDeviceContext->RSSetViewports(1, &vp);
-
-    return S_OK;
-}
-
-
-//=============================================================================
-// 初期化処理
-//=============================================================================
-HRESULT Init(HWND hWnd, BOOL bWindow) {
-    HRESULT hr = S_OK;
-
-    // バックバッファ生成
-    hr = CreateBackBuffer();
-    if (FAILED(hr)) {
-        return hr;
-    }
 
     // ラスタライズ設定
     D3D11_RASTERIZER_DESC rd;
@@ -462,43 +410,106 @@ HRESULT Init(HWND hWnd, BOOL bWindow) {
     dsd2.DepthEnable = FALSE;
     g_pd3dDevice->CreateDepthStencilState(&dsd2, &g_pDSS[1]);
 
-    //// ポリゴン表示初期化
-    //hr = InitPolygon(g_pd3dDevice);
-    //if (FAILED(hr))
-    //    return hr;
+    return S_OK;
+}
 
-    //// デバッグ文字列表示初期化
-    //hr = InitDebugProc();
-    //if (FAILED(hr))
-    //    return hr;
+//=============================================================================
+// バックバッファ解放
+//=============================================================================
+void ReleaseBackBuffer() {
+    if (g_pd3dDeviceContext) {
+        g_pd3dDeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
+    }
+    SAFE_RELEASE(g_pDepthStencilView);
+    SAFE_RELEASE(g_pDepthStencilTexture);
+    SAFE_RELEASE(g_pRenderTargetView);
+}
 
-    //// 入力処理初期化
-    //hr = InitInput();
-    //if (FAILED(hr))
-    //    return hr;
 
-    //// Assimp用シェーダ初期化
-    //if (!CAssimpModel::InitShader(g_pd3dDevice))
-    //    return E_FAIL;
+void CleanupRenderTarget()
+{
+    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = NULL; }
+}
 
-    //// メッシュ初期化
-    //hr = InitMesh();
-    //if (FAILED(hr))
-    //    return hr;
+// Forward declare message handler from imgui_impl_win32.cpp
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-    //// 数字初期化
-    //hr = InitNumber();
-    //if (FAILED(hr))
-    //    return hr;
+// Win32 message handler
+// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
+// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
+// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+        return true;
 
-    //// サウンド初期化
-    //CSound::Init();
+    switch (msg)
+    {
+    case WM_SIZE:
+        if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
+        {
+            CleanupRenderTarget();
+            g_pSwapChain->ResizeBuffers(0, (UINT)LOWORD(lParam), (UINT)HIWORD(lParam), DXGI_FORMAT_UNKNOWN, 0);
+            CreateRenderTarget();
+        }
+        return 0;
+    case WM_SYSCOMMAND:
+        if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
+            return 0;
+        break;
+    case WM_DESTROY:
+        ::PostQuitMessage(0);
+        return 0;
+    }
+    return ::DefWindowProc(hWnd, msg, wParam, lParam);
+}
 
-    //// シーン初期化
-    //hr = InitScene();
-    //if (FAILED(hr)) {
-    //    return hr;
-    //}
+
+
+//=============================================================================
+// 初期化処理
+//=============================================================================
+HRESULT Init(HWND hWnd, BOOL bWindow) {
+    HRESULT hr = S_OK;
+
+    // ポリゴン表示初期化
+    hr = InitPolygon(g_pd3dDevice);
+    if (FAILED(hr))
+        return hr;
+
+    // デバッグ文字列表示初期化
+    hr = InitDebugProc();
+    if (FAILED(hr))
+        return hr;
+
+    // 入力処理初期化
+    hr = InitInput();
+    if (FAILED(hr))
+        return hr;
+
+    // Assimp用シェーダ初期化
+    if (!CAssimpModel::InitShader(g_pd3dDevice))
+        return E_FAIL;
+
+    // メッシュ初期化
+    hr = InitMesh();
+    if (FAILED(hr))
+        return hr;
+
+    // 数字初期化
+    hr = InitNumber();
+    if (FAILED(hr))
+        return hr;
+
+    // サウンド初期化
+    CSound::Init();
+
+    // シーン初期化
+    hr = InitScene();
+    if (FAILED(hr)) {
+        return hr;
+    }
 
     // ボリライン初期化
     //hr = InitPolyline();
@@ -533,17 +544,6 @@ HRESULT Init(HWND hWnd, BOOL bWindow) {
     return hr;
 }
 
-//=============================================================================
-// バックバッファ解放
-//=============================================================================
-void ReleaseBackBuffer() {
-    if (g_pd3dDeviceContext) {
-        g_pd3dDeviceContext->OMSetRenderTargets(0, nullptr, nullptr);
-    }
-    SAFE_RELEASE(g_pDepthStencilView);
-    SAFE_RELEASE(g_pDepthStencilTexture);
-    SAFE_RELEASE(g_pRenderTargetView);
-}
 
 //=============================================================================
 // 終了処理
@@ -555,29 +555,29 @@ void Uninit(void) {
     //}
     //UninitPolyline();
 
-    //// サウンド終了処理
-    //CSound::Fin();
+    // サウンド終了処理
+    CSound::Fin();
 
-    //// シーン終了処理
-    //UninitScene();
+    // シーン終了処理
+    UninitScene();
 
-    //// 数字終了処理
-    //UninitNumber();
+    // 数字終了処理
+    UninitNumber();
 
-    //// メッシュ終了処理
-    //UninitMesh();
+    // メッシュ終了処理
+    UninitMesh();
 
-    //// Assimp用シェーダ終了処理
-    //CAssimpModel::UninitShader();
+    // Assimp用シェーダ終了処理
+    CAssimpModel::UninitShader();
 
-    //// 入力処理終了処理
-    //UninitInput();
+    // 入力処理終了処理
+    UninitInput();
 
-    //// デバッグ文字列表示終了処理
-    //UninitDebugProc();
+    // デバッグ文字列表示終了処理
+    UninitDebugProc();
 
-    //// ポリゴン表示終了処理
-    //UninitPolygon();
+    // ポリゴン表示終了処理
+    UninitPolygon();
 
     // 深度ステンシルステート解放
     for (int i = 0; i < _countof(g_pDSS); ++i) {
@@ -605,33 +605,42 @@ void Uninit(void) {
 
     // デバイスの開放
     SAFE_RELEASE(g_pd3dDevice);
+
+    // ImGuiの終了処理
+    ImGui_ImplDX11_Shutdown();
+    ImGui_ImplWin32_Shutdown();
+    ImGui::DestroyContext();
+
+    //CleanupDeviceD3D();
+    //::DestroyWindow(g_hwnd);
+    //::UnregisterClass(wc.lpszClassName, wc.hInstance);
 }
 
 //=============================================================================
 // 更新処理
 //=============================================================================
 void Update(void) {
-    //// 入力処理更新
-    //UpdateInput();	// 必ずUpdate関数の先頭で実行.
+    // 入力処理更新
+    UpdateInput();	// 必ずUpdate関数の先頭で実行.
 
-    //// デバッグ文字列表示更新
-    //UpdateDebugProc();
+    // デバッグ文字列表示更新
+    UpdateDebugProc();
 
-    //// デバッグ文字列設定
-    //StartDebugProc();
-    //PrintDebugProc("FPS:%d\n\n", g_nCountFPS);
+    // デバッグ文字列設定
+    StartDebugProc();
+    PrintDebugProc("FPS:%d\n\n", g_nCountFPS);
 
-    //// ポリゴン表示更新
-    //UpdatePolygon();
+    // ポリゴン表示更新
+    UpdatePolygon();
 
-    //// カメラ更新
-    //CCamera::Get()->Update();
+    // カメラ更新
+    CCamera::Get()->Update();
 
-    //// サウンド更新
-    //CSound::Update();
+    // サウンド更新
+    CSound::Update();
 
-    //// シーン更新
-    //UpdateScene();
+    // シーン更新
+    UpdateScene();
 
     // ポリライン更新
     //for (int i = 0; i < MAX_POLYLINE; ++i) {
@@ -645,32 +654,51 @@ void Update(void) {
 // 描画処理
 //=============================================================================
 void Draw(void) {
-    // バックバッファ＆Ｚバッファのクリア
-    float ClearColor[4] = { 0.117647f, 0.254902f, 0.352941f, 1.0f };
-    g_pd3dDeviceContext->ClearRenderTargetView(g_pRenderTargetView, ClearColor);
-    g_pd3dDeviceContext->ClearDepthStencilView(g_pDepthStencilView,
-        D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-
-
     // ポリライン描画
     //for (int i = 0; i < MAX_POLYLINE; ++i) {
     //	DrawPolyline(&g_polyline[i]);
     //}
 
-    //// シーン描画
-    //DrawScene();
+    // シーン描画
+    DrawScene();
 
 
     // Zバッファ無効(Zチェック無&Z更新無)
     SetZBuffer(false);
 
-    //// デバッグ文字列表示
-    //SetBlendState(BS_ALPHABLEND);
-    //DrawDebugProc();
-    //SetBlendState(BS_NONE);
+    // デバッグ文字列表示
+    SetBlendState(BS_ALPHABLEND);
+    DrawDebugProc();
+    SetBlendState(BS_NONE);
+}
 
-    // バックバッファとフロントバッファの入れ替え
-    g_pSwapChain->Present(g_uSyncInterval, 0);
+
+//=============================================================================
+// メイン ウィンドウ ハンドル取得
+//=============================================================================
+HWND GetMainWnd() {
+    return g_hwnd;
+}
+
+//=============================================================================
+// インスタンス ハンドル取得
+//=============================================================================
+HINSTANCE GetInstance() {
+    return g_hInst;
+}
+
+//=============================================================================
+// デバイス取得
+//=============================================================================
+ID3D11Device* GetDevice() {
+    return g_pd3dDevice;
+}
+
+//=============================================================================
+// デバイス コンテキスト取得
+//=============================================================================
+ID3D11DeviceContext* GetDeviceContext() {
+    return g_pd3dDeviceContext;
 }
 
 //=============================================================================
@@ -704,4 +732,26 @@ void SetCullMode(int nCullMode) {
     if (nCullMode >= 0 && nCullMode < MAX_CULLMODE) {
         g_pd3dDeviceContext->RSSetState(g_pRs[nCullMode]);
     }
+}
+
+
+void RenderBegin() {
+    // バックバッファ＆Ｚバッファのクリア
+    float ClearColor[4] = { 0.117647f, 0.254902f, 0.352941f, 1.0f };
+    g_pd3dDeviceContext->ClearRenderTargetView(g_pRenderTargetView, ClearColor);
+    g_pd3dDeviceContext->ClearDepthStencilView(g_pDepthStencilView,
+        D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+    // DearImGui更新
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+}
+
+
+void RenderEnd() {
+    ImGui::Render();
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, g_pDepthStencilView);
+    // バックバッファとフロントバッファの入れ替え
+    g_pSwapChain->Present(g_uSyncInterval, 0);
 }
